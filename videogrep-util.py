@@ -53,16 +53,18 @@ def patch_moviepy():
     import moviepy
 
     if importlib.metadata.version('moviepy') == '1.0.3':
-        savedFunc = moviepy.audio.io.readers.FFMPEG_AudioReader.initialize
         moviepy.audio.io.readers.FFMPEG_AudioReader.initialize = monkey_patched_moviepy
     else:
         print("unable to patch moviepy. 1.0.3 is supported only.")
 
-def prepare_video(fullpath, subtitleFile, toDelete):
-    wasCreated = False
-    if not os.path.isfile(subtitleFile):
+def prepare_video(args, fullpath, subtitleFile, toDelete):
+    isFile = os.path.isfile(subtitleFile)
+
+    if args.delete_all_srt:
+        if isFile:
+            toDelete.append(subtitleFile)
+    elif not isFile:
         assert subtitleFile[-4:] == '.srt', 'subtitleFile must end in srt'
-        wasCreated = True
         command = [
             "ffmpeg",
             "-i", fullpath,
@@ -71,8 +73,8 @@ def prepare_video(fullpath, subtitleFile, toDelete):
             "-y"  # Overwrite output file if it exists
         ]
         subprocess.run(command, check=True)
-
-    toDelete.append((subtitleFile, wasCreated))
+        if args.delete_generated:
+            toDelete.append(subtitleFile)
 
 def get_top_level_name(fullpath):
     split_path = fullpath.split(str(os.sep))
@@ -98,7 +100,10 @@ def process_file(args, file, toProcess, toDelete):
     withoutExtension, _ = os.path.splitext(filename)
     subtitleFile = os.path.join(args.input, f'{withoutExtension}.srt')
 
-    prepare_video(fullpath, subtitleFile, toDelete)
+    prepare_video(args, fullpath, subtitleFile, toDelete)
+
+    if args.delete_all_srt:
+        return
 
     if not args.combine:
         outputName = get_top_level_name(args.input)
@@ -107,7 +112,7 @@ def process_file(args, file, toProcess, toDelete):
             notFullPath = withoutExtension.split(str(os.sep))[-1]
             outputName = f'{notFullPath[:match.end('episode')]} supercut.mp4'
 
-        videogrep(fullpath, args.search, output=outputName, search_type=args.search_type)#, padding=3)
+        videogrep(fullpath, args.search, output=outputName, search_type=args.search_type)
     else:
         toProcess.append(fullpath)
 
@@ -131,21 +136,18 @@ def process_files(args):
         process_file(args, None, toProcess, toDelete)
 
     if toProcess:
-        print(get_top_level_name(userInput))
-        videogrep(toProcess, searchTerm, output=f'{get_top_level_name(userInput)} {searchTerm} supercut.mp4', search_type=args.search_type)#, padding=3)
+        videogrep(toProcess, searchTerm, output=f'{get_top_level_name(userInput)} {searchTerm} supercut.mp4', search_type=args.search_type)
 
-    if args.delete_generated:
-        for file, wasCreated in toDelete:
-            if wasCreated or args.deleted_all_srt:
-                os.remove(file)
+    for file in toDelete:
+        os.remove(file)
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-s", "--search", help='search input')
     parser.add_argument("-st", "--search-type", default="sentence")
     parser.add_argument("-i", "--input")
-    parser.add_argument("-d", "--delete-generated", default=False, help='delete str generated this run')
-    parser.add_argument("-dall", "--delete-all-srt", default=False, help="delete srt even if not generated this run")
+    parser.add_argument("-d", "--delete-generated", action='store_true', default=False, help='delete str generated this run')
+    parser.add_argument("-dall", "--delete-all-srt", action='store_true', default=False, help="delete srt even if not generated this run only")
     parser.add_argument("-c", "--combine", default=False, help='if true output is collated')
     parser.add_argument("-force", "--force-english", default=True, help='if true enable hack to select English audio channel')
 
