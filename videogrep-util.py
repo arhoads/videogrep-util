@@ -58,13 +58,14 @@ def patch_moviepy():
         print("unable to patch moviepy. 1.0.3 is supported only.")
 
 def prepare_video(args, fullpath, subtitleFile, toDelete):
+    assert subtitleFile[-4:] == '.srt', 'subtitleFile must end in srt'
+
     isFile = os.path.isfile(subtitleFile)
 
     if args.delete_all_srt:
         if isFile:
             toDelete.append(subtitleFile)
     elif not isFile:
-        assert subtitleFile[-4:] == '.srt', 'subtitleFile must end in srt'
         command = [
             "ffmpeg",
             "-i", fullpath,
@@ -86,16 +87,18 @@ def get_top_level_name(fullpath):
 
     return split_path[-1]
 
-def process_file(args, file, toProcess, toDelete):
-    if file is None:
+def process_file(args, filename, toProcess, toDelete):
+    if filename is None:
         # os.path.join let's us be sloppy
-        file = args.input
-
-    filename = os.fsdecode(file)
-    if not mimetypes.guess_type(filename)[0].startswith('video'):
-        return
+        filename = args.input
 
     fullpath = os.path.join(args.input, filename)
+    if not os.path.isfile(fullpath):
+        return False
+
+    mimetype, _ = mimetypes.guess_type(filename)
+    if not mimetype or not mimetype.startswith('video'):
+        return True
 
     withoutExtension, _ = os.path.splitext(filename)
     subtitleFile = os.path.join(args.input, f'{withoutExtension}.srt')
@@ -103,7 +106,7 @@ def process_file(args, file, toProcess, toDelete):
     prepare_video(args, fullpath, subtitleFile, toDelete)
 
     if args.delete_all_srt:
-        return
+        return True
 
     if not args.combine:
         outputName = get_top_level_name(args.input)
@@ -116,27 +119,38 @@ def process_file(args, file, toProcess, toDelete):
     else:
         toProcess.append(fullpath)
 
-def process_files(args):
+    return True
+
+def process_files_helper(args, toDelete, toProcess):
     userInput = args.input
-    searchTerm = args.search
 
     if not os.path.exists(userInput):
         print("invalid input")
         return
 
-    toProcess = []
-    toDelete = []
-
     directory = os.fsencode(userInput)
     
     if os.path.isdir(directory):
         for file in os.listdir(directory):
-            process_file(args, file, toProcess, toDelete)
+            file = os.fsdecode(file)
+            if not process_file(args, file, toProcess, toDelete):
+                args.input = os.path.join(args.input, file)
+                process_files_helper(args, toDelete, toProcess)
+                args.input = userInput # restore old value
     else:
         process_file(args, None, toProcess, toDelete)
 
+def process_files(args):
+    userInput = args.input
+
+    toProcess = []
+    toDelete = []
+
+    process_files_helper(args, toDelete, toProcess)
+
     if toProcess:
-        videogrep(toProcess, searchTerm, output=f'{get_top_level_name(userInput)} {searchTerm} supercut.mp4', search_type=args.search_type)
+        print(f'processing: {toProcess}')
+        videogrep(toProcess, args.search, output=f'{get_top_level_name(userInput)} {args.search} supercut.mp4', search_type=args.search_type, padding=1)
 
     for file in toDelete:
         os.remove(file)
@@ -148,7 +162,7 @@ def main():
     parser.add_argument("-i", "--input")
     parser.add_argument("-d", "--delete-generated", action='store_true', default=False, help='delete str generated this run')
     parser.add_argument("-dall", "--delete-all-srt", action='store_true', default=False, help="delete srt even if not generated this run only")
-    parser.add_argument("-c", "--combine", default=False, help='if true output is collated')
+    parser.add_argument("-c", "--combine", default=True, help='if true output is collated')
     parser.add_argument("-force", "--force-english", default=True, help='if true enable hack to select English audio channel')
 
     args = parser.parse_args()
